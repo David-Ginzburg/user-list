@@ -1,31 +1,35 @@
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback } from "react";
-import { useUsersList } from "../api/get-user-list";
+import { useSearchParameters } from "@/shared/query-params";
+import { useUserListQueryParamsConfig } from "./use-user-list-query-params-config";
 
 export const useUserListParams = () => {
-	const { data } = useUsersList();
+	const ticketListQueryParamsConfig = useUserListQueryParamsConfig();
 
-	const searchParams = useSearchParams();
-	const router = useRouter();
-	const pathname = usePathname();
-
-	const totalPages = data?.length ? data.length / 3 : 0;
-
-	const setFilter = useCallback(
-		(name: string, value: string) => {
-			console.log(name, value);
-			const params = new URLSearchParams(searchParams.toString());
-			params.set(name, value);
-
-			router.push(pathname + "?" + params.toString());
-			return params.toString();
-		},
-		[pathname, router, searchParams]
+	const { params, setSearchParams, setListSearchParams } = useSearchParameters(
+		ticketListQueryParamsConfig,
+		{
+			pageKey: "page",
+		}
 	);
 
+	const searchQuery = typeof params.searchQuery === "string" ? params.searchQuery : "";
+	const page = (params.page as number) || 1;
+	const pageSize = (params.page_size as number) || 20;
+
+	const setFilters = (filters: { searchQuery?: string }) => {
+		setListSearchParams(filters);
+	};
+
+	const setPage = (newPage: number) => {
+		setSearchParams({ page: newPage });
+	};
+
 	return {
-		searchParams,
-		setFilter,
-		totalPages,
+		params: {
+			searchQuery,
+			page,
+			pageSize,
+		},
+		setFilters,
+		setPage,
 	};
 };

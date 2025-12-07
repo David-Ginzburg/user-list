@@ -1,49 +1,130 @@
-import { useCallback, useMemo } from 'react'
-import { useQueryParams } from 'use-query-params'
+import { useCallback, useMemo } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 
-import { PAGE_KEY } from './const'
-import { replaceNullWithUndefined } from './replace-null-with-undefined'
+import { PAGE_KEY } from "./const";
 
-import type { InputValue } from './types'
-import type {
-  QueryParamConfigMapWithInherit,
-  QueryParamOptions,
-} from 'use-query-params'
+// Типы для конфигурации параметров
+export type QueryParamConfig = {
+	[key: string]: {
+		defaultValue?: string | number;
+		parse?: (value: string) => string | number | undefined;
+		serialize?: (value: string | number) => string;
+	};
+};
 
-export interface UseSearchParametersProps<Config> {
-  queryOptions?: QueryParamOptions
-  pageKey?: keyof Config
+export interface UseSearchParametersProps {
+	pageKey?: string;
 }
 
-export const useSearchParameters = <
-  Config extends QueryParamConfigMapWithInherit,
->(
-  config: Config,
-  { queryOptions, pageKey = PAGE_KEY }: UseSearchParametersProps<Config> = {}
+// Функция для парсинга значения из URL
+const parseValue = (
+	value: string | null,
+	config?: QueryParamConfig[string]
+): string | number | undefined => {
+	if (!value) return undefined;
+	if (config?.parse) {
+		return config.parse(value);
+	}
+	// Пытаемся определить тип автоматически
+	const numValue = Number(value);
+	if (!isNaN(numValue) && value.trim() !== "") {
+		return numValue;
+	}
+	return value;
+};
+
+// Функция для сериализации значения в URL
+const serializeValue = (
+	value: string | number | undefined,
+	config?: QueryParamConfig[string]
+): string | undefined => {
+	if (value === undefined || value === null) return undefined;
+	if (config?.serialize) {
+		return config.serialize(value);
+	}
+	return String(value);
+};
+
+export const useSearchParameters = (
+	config: QueryParamConfig = {},
+	{ pageKey = PAGE_KEY }: UseSearchParametersProps = {}
 ) => {
-  const [query, setQuery] = useQueryParams(config, queryOptions)
-  const params = useMemo(() => replaceNullWithUndefined(query), [query])
+	const searchParams = useSearchParams();
+	const router = useRouter();
+	const pathname = usePathname();
 
-  const setSearchParams = useCallback<(value: InputValue<Config>) => void>(
-    (value) => {
-      setQuery(value)
-    },
-    [setQuery]
-  )
+	// Парсим все параметры из URL
+	const params = useMemo(() => {
+		const result: Record<string, string | number | undefined> = {};
 
-  const setListSearchParams = useCallback<(value: InputValue<Config>) => void>(
-    (value) => {
-      setQuery({
-        [pageKey]: undefined,
-        ...value,
-      })
-    },
-    [pageKey, setQuery]
-  )
+		// Получаем все параметры из URL
+		searchParams.forEach((value, key) => {
+			const paramConfig = config[key];
+			result[key] = parseValue(value, paramConfig) ?? paramConfig?.defaultValue;
+		});
 
-  return {
-    params,
-    setListSearchParams,
-    setSearchParams,
-  }
-}
+		// Добавляем значения по умолчанию для параметров, которых нет в URL
+		Object.keys(config).forEach((key) => {
+			if (!(key in result) && config[key].defaultValue !== undefined) {
+				result[key] = config[key].defaultValue;
+			}
+		});
+
+		return result;
+	}, [searchParams, config]);
+
+	// Функция для обновления параметров
+	const updateSearchParams = useCallback(
+		(updates: Record<string, string | number | undefined>) => {
+			const current = new URLSearchParams(searchParams.toString());
+
+			Object.entries(updates).forEach(([key, value]) => {
+				const serialized = serializeValue(value, config[key]);
+				if (serialized === undefined || serialized === "") {
+					current.delete(key);
+				} else {
+					current.set(key, serialized);
+				}
+			});
+
+			// Удаляем параметры со значениями по умолчанию
+			Object.keys(config).forEach((key) => {
+				const currentValue = current.get(key);
+				const defaultValue = config[key].defaultValue;
+				if (currentValue && defaultValue !== undefined) {
+					const serializedDefault = serializeValue(defaultValue, config[key]);
+					if (currentValue === serializedDefault) {
+						current.delete(key);
+					}
+				}
+			});
+
+			router.push(`${pathname}?${current.toString()}`, { scroll: false });
+		},
+		[searchParams, router, pathname, config]
+	);
+
+	const setSearchParams = useCallback(
+		(value: Record<string, string | number | undefined>) => {
+			updateSearchParams(value);
+		},
+		[updateSearchParams]
+	);
+
+	const setListSearchParams = useCallback(
+		(value: Record<string, string | number | undefined>) => {
+			// При изменении фильтров сбрасываем страницу
+			updateSearchParams({
+				[pageKey]: undefined,
+				...value,
+			});
+		},
+		[updateSearchParams, pageKey]
+	);
+
+	return {
+		params,
+		setListSearchParams,
+		setSearchParams,
+	};
+};
